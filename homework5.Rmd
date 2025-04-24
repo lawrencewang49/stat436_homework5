@@ -1,0 +1,118 @@
+---
+title: "Homework 5"
+author: "Lawrence Wang"
+date: "2025-04-20"
+output: html_document
+---
+```{r setup, message=FALSE, warning=FALSE}
+library(tidyverse)
+library(ggplot2)
+library(umap)
+library(ggrepel)
+
+spotify_tracks <- read_csv("https://raw.githubusercontent.com/lawrencewang49/stat436_homework5/refs/heads/main/spotify_dataset.csv")
+```
+
+# Visualization 1
+```{r}
+# Prepare data
+set.seed(42)
+spotify_sample <- spotify_tracks[sample(nrow(spotify_tracks), 5000), ]
+
+spotify_clean <- spotify_sample %>%
+  select(danceability, energy, loudness, valence, tempo, duration_ms) %>%
+  scale()
+
+# UMAP projection
+umap_out <- umap(spotify_clean, config = umap.defaults)
+
+# Get top 3 most common genres
+top_genres <- names(sort(table(spotify_sample$track_genre), decreasing = TRUE)[1:3])
+
+# Prepare plot data
+plot_data <- data.frame(
+  x = umap_out$layout[,1],
+  y = umap_out$layout[,2],
+  genre = spotify_sample$track_genre,
+  popularity = spotify_sample$popularity
+) %>%
+  mutate(
+    genre_highlight = ifelse(genre %in% top_genres, genre, "Other")
+  )
+
+# Label points using highest popularity in each top genre
+label_data <- plot_data %>%
+  filter(genre %in% top_genres) %>%
+  group_by(genre) %>%
+  slice_max(order_by = popularity, n = 1)
+
+# Plot
+ggplot() +
+  # Non-highlighted points
+  geom_point(data = plot_data %>% filter(genre_highlight == "Other"),
+             aes(x, y, size = popularity),
+             color = "grey80", alpha = 0.3) +
+  # Highlighted genre points
+  geom_point(data = plot_data %>% filter(genre_highlight != "Other"),
+             aes(x, y, color = genre_highlight, size = popularity),
+             alpha = 0.7) +
+  # Labels for top genres
+  geom_label_repel(
+    data = label_data,
+    aes(x, y, label = genre),
+    fill = alpha("white", 0.8),
+    box.padding = 0.35,
+    point.padding = 0.5,
+    segment.color = "grey50"
+  ) +
+  # Customize scales and labels
+  scale_color_manual(values = c("idm" = "#E69F00", "swedish" = "#56B4E9", "j-idol" = "#009E73")) +
+  scale_size(range = c(1, 6)) +
+  labs(
+    title = "UMAP Projection of Spotify Tracks",
+    subtitle = "Highlighting top 3 most common genres",
+    x = "UMAP Dimension 1",
+    y = "UMAP Dimension 2",
+    color = "Genre",
+    size = "Popularity"
+  ) +
+  theme_minimal() +
+  theme(legend.position = "right")
+
+```
+
+
+# Visualization 2
+```{r pca-plot, fig.width=12, fig.height=12}
+# Get genre means
+genre_means <- spotify_tracks %>%
+  group_by(track_genre) %>%
+  summarize(
+    danceability = mean(danceability),
+    energy = mean(energy),
+    valence = mean(valence),
+    acousticness = mean(acousticness),
+    .groups = 'drop'
+  ) %>%
+  column_to_rownames("track_genre")
+
+# Scale the features
+genre_means_scaled <- scale(genre_means)
+
+# Perform PCA
+pca_result <- prcomp(genre_means_scaled, center = TRUE, scale. = TRUE)
+
+# Extract PCA scores (positions of each genre in PC space)
+pca_scores <- as.data.frame(pca_result$x) %>%
+  rownames_to_column("track_genre")
+
+# Use k-means to cluster genres based on PCA scores
+pca_scores$cluster <- factor(kmeans(pca_scores[, 2:3], centers = 6)$cluster)
+
+# Plot again with color
+ggplot(pca_scores, aes(x = PC1, y = PC2, color = cluster, label = track_genre)) +
+  geom_point(size = 3) +
+  geom_text_repel(size = 3.5) +
+  labs(title = "PCA of Genre Audio Features (Colored by Cluster)") +
+  theme_minimal()
+```
